@@ -9,5 +9,6 @@ gtk/MANIFEST
 gtk/Makefile.PL
 gtk/README
 gtk/pmp3_gtk
+gtk/pmp3_mini
 gtk/pmp3rc
 gtk/upload_status

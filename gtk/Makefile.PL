@@ -7,6 +7,7 @@ WriteMakefile(
     ABSTRACT        => 'A Perl MP3 Player',
     PREFIX          => '/usr/local',
     PM              => {'pmp3_gtk' => '${INST_BIN}/pmp3_gtk',
+                        'pmp3_mini' => '${INST_BIN}/pmp3_mini',
                         'upload_status' => '${INST_BIN}/upload_status',
                        },
     MAN3PODS        => {'pmp3_gtk' => '${INST_MAN3DIR}/pmp3_gtk.3'},
