@@ -77,14 +77,16 @@ Perl itself.
 =cut
 
 use strict;
-use vars qw(%config $VERSION $has_readkey);
+use vars qw(%config $CVSVERSION $VERSION $has_readkey);
 use MPEG::MP3Info;
 use MPEG::MP3Play qw(:msg :state);
 use Getopt::Std;
 use Term::Cap;
 require Net::FTP if $config{useftp};
 
-( $VERSION ) = '$Revision: 1.1.1.1 $ ' =~ /\$Revision:\s+([^\s]+)/;
+( $CVSVERSION ) = '$Revision: 1.3 $ ' =~ /\$Revision:\s+([^\s]+)/;
+
+$VERSION = "1.2";
 
 sub randomize (\@);
 
@@ -106,24 +108,21 @@ if($start =~ m#^.*/$#) { chop $start; }
 mp3_ls($start,\@mp3s);
 
 unless ( defined($args{x}) ) {
-   my (@dirs,@dirs_tmp);
-   my $continue;
+    my (@dirs,@dirs_tmp);
+    my $continue;
 
-   opendir DIR,$start;
-   push(@dirs, grep -d, map "$start/$_", readdir DIR);
-   closedir DIR;
-   foreach my $dir (@dirs) {
-	unless($dir =~ /\.\.?$/) {
-           opendir DIR,$dir;
-           push(@dirs,grep -d, map "$dir/$_",readdir DIR);
-	   closedir DIR;
+    opendir DIR,$start;
+    push(@dirs, grep -d, map "$start/$_", readdir DIR);
+    closedir DIR;
+    foreach my $dir (@dirs) {
+        unless($dir =~ /\.\.?$/) {
+            opendir DIR,$dir;
+            push(@dirs,grep -d, map "$dir/$_",readdir DIR);
+            closedir DIR;
+        	mp3_ls($dir,\@mp3s);
         }
-
-	if($dir =~ /\.\.?$/) { $dir =~ s/\/\.\.?//;}
-	mp3_ls($dir,\@mp3s);
-   }
+    }
 }
-
 
 LOOP:
 
@@ -136,7 +135,11 @@ while($count < @mp3s) {
     $back = 0;
     my $mp3 = MPEG::MP3Play->new();
     $mp3->open($mp3s[$count]);
+    
+    upload_status($mp3,$mp3s[$count]) if $config{useftp};
+    
     $mp3->play;
+    
     print_status($mp3,$mp3s[$count]);
     $count++ unless $back;
 }
@@ -181,6 +184,7 @@ END {
 	print "\n\n";
 	$has_readkey and ReadMode(0);
     if($config{useftp}) {
+        print "Uploading 'inactive' status message...\n";
         open(FILE,"+>/tmp/$config{ftpfile}"); 
         print FILE "Pmp3 not active..."; 
         close FILE;
@@ -207,6 +211,47 @@ sub randomize (\@) {
 }
 
 
+sub upload_status {
+    my ($mp3,$mp3_loc) = @_;
+    clear_screen();
+                
+	my $tag = get_mp3tag($mp3_loc);
+
+	foreach (qw(TITLE ARTIST ALBUM)) {
+		$tag->{$_} = 'Unknown' unless $tag->{$_};
+	}
+
+    my $filename_str = "Filename: $mp3_loc";
+
+	format FILE = 
+The Perl MP3 Player
+====================
+
+Current MP3 Info:
+-----------------------------------------------------------------------------
+Title: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Artist: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+       $tag->{TITLE},                          $tag->{ARTIST}
+Album: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Year: @<<<<
+       $tag->{ALBUM},                        $tag->{YEAR}
+Comment: @<<<<<<<<<<<<<<<<<<<<<<<<<<<  Genre: @<<<<<<<<<<<<<
+         $tag->{COMMENT},                     $tag->{GENRE}
+-----------------------------------------------------------------------------
+@<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+$filename_str
+.
+    print "Uploading status file...\n";
+    open(FILE,"+>/tmp/$config{ftpfile}"); 
+    write FILE; 
+    close FILE;
+    my $ftp = Net::FTP->new($config{ftphost}, Passive => 1);
+  	$ftp->login($config{ftpuser},$config{ftppassword});
+   	$ftp->cwd($config{ftppath});
+   	$ftp->put("/tmp/$config{ftpfile}");
+   	$ftp->quit;
+
+    clear_screen();
+}
+
 
 # print_status
 # This sub is entirely too complex. It handles the 
@@ -227,9 +272,19 @@ sub print_status {
 		$tag->{$_} = 'Unknown' unless $tag->{$_};
 	}
 
-	$minutes = $info->{MM} || '??';
-	$secs = $info->{SS} || '??';	
-	if(($secs ne '??') && ($secs !~ /[0-9][0-9]/)) { $secs = "0$secs"; }
+    if($info->{MM}) {
+        $minutes = $info->{MM};
+    } else {
+        $minutes = 0;
+    } 
+
+    if($info->{SS}) {
+        $secs = $info->{SS};
+    } else {
+        $secs = 0;
+    } 
+    
+	if($secs !~ /[0-9][0-9]/) { $secs = "0$secs"; }
 
 	($layer = '?') unless $layer = $info->{LAYER};
 	($bitrate = '?') unless $bitrate = $info->{BITRATE};
@@ -258,38 +313,7 @@ Total Time: @>>:@<<
 -----------------------------------------------------------------------------
 .
 
-    my $filename_str = "Filename: $mp3_loc";
-
-	format FILE = 
-The Perl MP3 Player
-====================
-
-Current MP3 Info:
------------------------------------------------------------------------------
-Title: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Artist: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-       $tag->{TITLE},                          $tag->{ARTIST}
-Album: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Year: @<<<<
-       $tag->{ALBUM},                        $tag->{YEAR}
-Comment: @<<<<<<<<<<<<<<<<<<<<<<<<<<<  Genre: @<<<<<<<<<<<<<
-         $tag->{COMMENT},                     $tag->{GENRE}
-Total Time: @>>:@<<
-            $info->{MM},$secs
------------------------------------------------------------------------------
-@<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-$filename_str
-.
-
 	{ local $~ = 'Output'; write; }
-    if($config{useftp})	{ 	
-        open(FILE,"+>/tmp/$config{ftpfile}"); 
-        write FILE; 
-        close FILE;
-		my $ftp = Net::FTP->new($config{ftphost}, Passive => 1);
-		$ftp->login($config{ftpuser},$config{ftppassword});
-		$ftp->cwd($config{ftppath});
-		$ftp->put("/tmp/$config{ftpfile}");
-		$ftp->quit;
-	}
 		
 	print "\nPlaying MPEG stream from $mp3_loc\n";
 	print "MPEG Layer $layer Version $mp3_version, $bitrate kbits/s, $freq Hz, $stereo\n";
@@ -385,7 +409,6 @@ sub mp3_ls {
 }
 
 
-
 # die_usage
 # keel over and print usage info
 sub die_usage {
@@ -418,9 +441,15 @@ EOF
 
 =head1 CVS INFO
 
-    $Id: playmp3,v 1.1.1.1 2000/09/24 21:22:05 matt Exp $
+    $Id: playmp3,v 1.3 2000/09/29 02:15:15 matt Exp $
 
     $Log: playmp3,v $
+    Revision 1.3  2000/09/29 02:15:15  matt
+    moved ftp cmd prior to mp3 playing to fix interface lock problem, fixed 0/?? bug in the time code
+
+    Revision 1.2  2000/09/28 23:42:26  matt
+    fixed bug in playlist generation that caused songs to be listed more than once
+
     Revision 1.1.1.1  2000/09/24 21:22:05  matt
     First release
 
