@@ -1,0 +1,59 @@
+#!/usr/bin/perl
+
+use Net::FTP;
+use MPEG::MP3Info;
+
+my %config;
+my $mp3 = shift or die;
+ 
+eval { 
+	open CONFIG, "$ENV{HOME}/.pmp3rc" or die;
+    while (<CONFIG>) {
+    	chomp;
+        next if /^.*?#/;
+        next unless $_;
+        /^(.+?)\s+(.+?)$/;
+        $config{$1} = $2;
+    }
+    close CONFIG;
+};
+
+$config{useftp} = 0 if $@;
+
+if ($config{useftp}) {  
+
+	my $tag = get_mp3tag($mp3);
+	my $filename_str = "Filename: $mp3";
+
+	format FILE =
+The Perl MP3 Player
+====================
+	
+Current MP3 Info:
+-----------------------------------------------------------------------------
+Title: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Artist: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+       $tag->{TITLE},                          $tag->{ARTIST}
+Album: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Year: @<<<<
+       $tag->{ALBUM},                        $tag->{YEAR}
+Comment: @<<<<<<<<<<<<<<<<<<<<<<<<<<<  Genre: @<<<<<<<<<<<<<
+         $tag->{COMMENT},                     $tag->{GENRE}
+-----------------------------------------------------------------------------
+@<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+$filename_str
+.
+	 
+	eval {
+		open(FILE,"+>/tmp/$config{ftpfile}"); 
+		write FILE; 
+		close FILE;
+	
+		my $ftp = Net::FTP->new($config{ftphost}, Passive => 1, Timeout => 10);
+		$ftp->login($config{ftpuser},$config{ftppassword});
+		$ftp->cwd($config{ftppath});
+		$ftp->put("/tmp/$config{ftpfile}");
+		$ftp->quit;
+	};
+}
+
+print STDERR "FTP error: $@" if $@;
+

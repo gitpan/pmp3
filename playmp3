@@ -78,15 +78,16 @@ Perl itself.
 
 use strict;
 use vars qw(%config $CVSVERSION $VERSION $has_readkey);
+
 use MPEG::MP3Info;
 use MPEG::MP3Play qw(:msg :state);
 use Getopt::Std;
 use Term::Cap;
 require Net::FTP if $config{useftp};
 
-( $CVSVERSION ) = '$Revision: 1.3 $ ' =~ /\$Revision:\s+([^\s]+)/;
+( $CVSVERSION ) = '$Revision: 1.5 $ ' =~ /\$Revision:\s+([^\s]+)/;
 
-$VERSION = "1.2";
+$VERSION = "1.3";
 
 sub randomize (\@);
 
@@ -136,7 +137,7 @@ while($count < @mp3s) {
     my $mp3 = MPEG::MP3Play->new();
     $mp3->open($mp3s[$count]);
     
-    upload_status($mp3,$mp3s[$count]) if $config{useftp};
+    upload_status($mp3s[$count]) if $config{useftp};
     
     $mp3->play;
     
@@ -188,7 +189,7 @@ END {
         open(FILE,"+>/tmp/$config{ftpfile}"); 
         print FILE "Pmp3 not active..."; 
         close FILE;
-        my $ftp = Net::FTP->new($config{ftphost}, Passive => 1);
+        my $ftp = Net::FTP->new($config{ftphost}, Passive => 1, Timeout => 10);
         $ftp->login($config{ftpuser},$config{ftppassword});
         $ftp->cwd($config{ftppath});
         $ftp->put("/tmp/$config{ftpfile}");
@@ -212,44 +213,19 @@ sub randomize (\@) {
 
 
 sub upload_status {
-    my ($mp3,$mp3_loc) = @_;
-    clear_screen();
-                
-	my $tag = get_mp3tag($mp3_loc);
+    my ($mp3_loc) = @_;
 
-	foreach (qw(TITLE ARTIST ALBUM)) {
-		$tag->{$_} = 'Unknown' unless $tag->{$_};
-	}
+    eval {
+        my $pid = fork();
+        unless($pid) {
+            eval { exec("upload_status \"$mp3_loc\""); };
+        }
+    };
 
-    my $filename_str = "Filename: $mp3_loc";
-
-	format FILE = 
-The Perl MP3 Player
-====================
-
-Current MP3 Info:
------------------------------------------------------------------------------
-Title: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Artist: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-       $tag->{TITLE},                          $tag->{ARTIST}
-Album: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Year: @<<<<
-       $tag->{ALBUM},                        $tag->{YEAR}
-Comment: @<<<<<<<<<<<<<<<<<<<<<<<<<<<  Genre: @<<<<<<<<<<<<<
-         $tag->{COMMENT},                     $tag->{GENRE}
------------------------------------------------------------------------------
-@<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-$filename_str
-.
-    print "Uploading status file...\n";
-    open(FILE,"+>/tmp/$config{ftpfile}"); 
-    write FILE; 
-    close FILE;
-    my $ftp = Net::FTP->new($config{ftphost}, Passive => 1);
-  	$ftp->login($config{ftpuser},$config{ftppassword});
-   	$ftp->cwd($config{ftppath});
-   	$ftp->put("/tmp/$config{ftpfile}");
-   	$ftp->quit;
-
-    clear_screen();
+    if($@) {
+        print "Error: $@\n";
+        $config{useftp} = 0;
+    }
 }
 
 
@@ -441,9 +417,15 @@ EOF
 
 =head1 CVS INFO
 
-    $Id: playmp3,v 1.3 2000/09/29 02:15:15 matt Exp $
+    $Id: playmp3,v 1.5 2000/10/07 02:28:19 matt Exp $
 
     $Log: playmp3,v $
+    Revision 1.5  2000/10/07 02:28:19  matt
+    fixed interface freeze problem by moving status upload to an execd program
+
+    Revision 1.4  2000/09/29 17:27:46  matt
+    wrapped ftp code in an eval. if ftp fails the first time out, it will not try ftping again this session
+
     Revision 1.3  2000/09/29 02:15:15  matt
     moved ftp cmd prior to mp3 playing to fix interface lock problem, fixed 0/?? bug in the time code
 

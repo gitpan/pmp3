@@ -1,9 +1,6 @@
 NAME
     Pmp3 - The Perl MP3 Player
 
-DESCRIPTION
-    A console mp3 player built in Perl.
-
 INSTALL
 
     perl Makefile.PL && make && make install
@@ -13,7 +10,7 @@ UNINSTALL
     make uninstall
 
 SYNOPSIS
-        playmp3 -rld /mp3
+        pmp3_gtk -rld /mp3
 
 COMMAND LINE OPTIONS
     r    random
@@ -24,23 +21,11 @@ COMMAND LINE OPTIONS
 
     d    what dir to start in *(REQUIRED)*
 
-COMMAND LINE INTERFACE
-    b    previous song
-
-    n    next song
-
-    p    pause
-
-    q    quit
-
-    +    increase volume
-
-    -    decrease volume
-
 AUTHOR
     Matt Cashner <matt@cre8tivegroup.com>
 
 COPYRIGHT
     All code Copyright (c) 2000 Matt Cashner. This code may be distributed
     under the terms of Perl itself.
+
 

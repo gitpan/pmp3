@@ -1,0 +1,405 @@
+#!/usr/bin/perl
+# $Header: /cvsroot/pmp3/gtk/pmp3_gtk,v 1.7 2000/10/07 02:06:32 matt Exp $
+
+use strict;
+use Gtk;
+use MPEG::MP3Info;
+use MPEG::MP3Play qw(:msg :state);
+use Getopt::Std;
+use Net::FTP;
+use vars qw(%config $VERSION);
+$VERSION = '0.01';
+
+my $mp3 = MPEG::MP3Play->new();
+$mp3->volume(80);
+
+sub randomize (\@);
+
+local $| = 1;
+$SIG{CHLD} = 'IGNORE';
+
+my (@mp3_genres, %args,$start,@mp3s);
+
+use_winamp_genres();
+
+getopts("hrlxd:", \%args);
+if(defined($args{h})) { die_usage(); }
+if(!defined($args{d})) { die_usage(); }
+ 
+$start = $args{d};
+chomp $start;
+
+if($start =~ m#^.*/$#) { chop $start; }
+
+mp3_ls($start,\@mp3s);
+
+unless ( defined($args{x}) ) {
+    my (@dirs,@dirs_tmp);
+    my $continue;
+
+    opendir DIR,$start;
+    push(@dirs, grep -d, map "$start/$_", readdir DIR);
+    closedir DIR;
+    foreach my $dir (@dirs) {
+        unless($dir =~ /\.\.?$/) {
+            opendir DIR,$dir;
+            push(@dirs,grep -d, map "$dir/$_",readdir DIR);
+            closedir DIR;
+        	mp3_ls($dir,\@mp3s);
+        }
+    }
+}
+
+randomize(@mp3s) if defined $args{r};
+my $count = 0;
+my $paused = 0;
+my $playing = 0;
+my $input_tag;
+
+my $tag = get_mp3tag($mp3s[$count]);
+my $info = get_mp3info($mp3s[$count]);
+my ($filename) = $mp3s[$count] =~ m#^.*/(.+?)$#;
+$tag->{filename} = $filename;
+
+upload_status($tag) if $config{useftp};
+
+#########################################################################
+# GTK HERE   #
+##############
+
+Gtk->init();        # initialize Gtk-Perl
+Gtk->set_locale();  # internationalize
+
+# widget creation
+my $window = Gtk::Window->new( "toplevel" );
+
+my $mainbox = Gtk::VBox->new(0,5);
+
+my $topbuttons = Gtk::HButtonBox->new();
+my $bottombuttons = Gtk::HButtonBox->new();
+
+my $vcolumnl = Gtk::VBox->new(1,5);
+my $vcolumnr = Gtk::VBox->new(1,5);
+
+my $filebar = Gtk::HButtonBox->new();
+my $progress = Gtk::HButtonBox->new();
+my $volumebar = Gtk::HButtonBox->new();
+
+my $volumeadj = Gtk::Adjustment->new(80,0,100,5,5,0);
+$volumeadj->signal_connect("value_changed",\&change_volume);
+
+my $volume = Gtk::HScale->new($volumeadj);
+
+my $back = Gtk::Button->new( "<<" );
+my $play = Gtk::Button->new( ">" );
+my $next = Gtk::Button->new( ">>" );
+my $quit = Gtk::Button->new( "X" );
+my $stop = Gtk::Button->new( "[ ]" );
+my $pbar = Gtk::ProgressBar->new();
+
+my $title = Gtk::Entry->new(32);
+my $artist = Gtk::Entry->new(32);
+my $album = Gtk::Entry->new(32);
+my $year = Gtk::Entry->new(4);
+my $file = Gtk::Entry->new(50);
+
+my $title_frame = Gtk::Frame->new("Title");
+my $artist_frame = Gtk::Frame->new("Artist");
+my $album_frame = Gtk::Frame->new("Album");
+my $year_frame = Gtk::Frame->new("Year");
+my $file_frame = Gtk::Frame->new("Filename");
+
+
+$window->border_width( 10 );
+
+$topbuttons->set_spacing_default(2);
+
+$bottombuttons->set_layout('spread');
+$bottombuttons->set_spacing(0);
+$bottombuttons->set_child_size(20,20);
+
+$progress->set_child_size(200,10);
+$pbar->set_usize(200,10);
+$volume->set_value_pos('right');
+
+$file->set_text($filename);
+$title->set_editable(0);
+
+$title->set_text($tag->{TITLE});
+$title->set_editable(0);
+
+$artist->set_text($tag->{ARTIST});
+$artist->set_editable(0);
+$album->set_text($tag->{ALBUM});
+$album->set_editable(0);
+
+$year->set_text($tag->{YEAR});
+$year->set_editable(0);
+
+$window->set_title('PMP3 Alpha');
+$window->signal_connect( "delete_event", \&quit );   
+$back->signal_connect( "clicked", \&back );
+$play->signal_connect( "clicked", \&play );
+$next->signal_connect( "clicked", \&next );
+$stop->signal_connect( "clicked", \&stop );
+
+$quit->signal_connect("clicked", \&quit );
+
+
+
+$title_frame->add($title);
+$artist_frame->add($artist);
+$album_frame->add($album);
+$year_frame->add($year);
+$file_frame->add($file);
+
+$vcolumnl->add($title_frame);
+$vcolumnl->add($album_frame);
+
+$vcolumnr->add($artist_frame);
+$vcolumnr->add($year_frame);
+
+$bottombuttons->add($back);
+$bottombuttons->add($play);
+$bottombuttons->add($stop);
+$bottombuttons->add($next);
+$bottombuttons->add($quit);
+
+$topbuttons->add($vcolumnl);
+$topbuttons->add($vcolumnr);
+
+$progress->add($pbar);
+$filebar->add($file_frame);
+$volumebar->add($volume);
+
+$mainbox->add($progress);
+$mainbox->add($filebar);
+$mainbox->add($topbuttons);
+$mainbox->add($bottombuttons);
+$mainbox->add($volumebar);
+
+$window->add($mainbox);
+
+
+$window->show_all();
+
+
+# Gtk event loop
+Gtk->main();
+
+
+# Should never get here
+exit( 0 );
+
+#######################################################################
+sub change_volume {
+    my $adj = shift;
+    $mp3->volume($adj->value);
+}
+
+sub play {
+    if($paused && $playing) {
+        $paused = 0;
+        $mp3->play();
+    } elsif ($playing) {
+        $paused = 1;
+        $mp3->pause();
+    } else {        
+        $paused = 0;
+        $playing = 1;
+        my $input_fd = $mp3->get_command_read_pipe;
+        $input_tag = Gtk::Gdk->input_add ($input_fd, 'read', \&mp3_message_handler);
+    
+        $tag = get_mp3tag($mp3s[$count]);
+    
+        $title->set_text($tag->{TITLE});
+        $artist->set_text($tag->{ARTIST});
+        $album->set_text($tag->{ALBUM});
+        $year->set_text($tag->{YEAR});
+	
+        ($filename) = $mp3s[$count] =~ m#^.*/(.+?)$#;
+	    $tag->{filename} = $filename;
+    
+	    $file->set_text($filename);
+    
+        $mp3->open($mp3s[$count]);
+        $mp3->play;
+    
+    	upload_status($tag) if $config{useftp};
+	}
+    return $mp3;
+}
+
+sub back {
+    if($count == 0) {
+        if($args{l}) {
+            $count = $#mp3s;
+        }
+    } else {
+        $count--;
+    }
+    $playing = 0;
+    return play();
+}
+
+sub next {
+    if($count == $#mp3s) {
+        $count = 0 if($args{l});
+    } else {
+        $count++;
+    }
+    $playing = 0;
+    return play();
+} 
+
+sub stop {
+    $mp3->stop();
+    $playing = 0;
+    $pbar->update(0);
+}
+
+### Callback function to close the window
+sub quit {
+    $mp3->stop;
+    
+	if($config{useftp}) {
+		print "uploading inactive status message..\n";
+		open(FILE,"+>/tmp/$config{ftpfile}");
+		print FILE "Pmp3-gtk not active...";
+		close FILE;
+		my $ftp = Net::FTP->new($config{ftphost},Passive => 1, Timeout => 10);
+		$ftp->login($config{ftpuser},$config{ftppassword});
+		$ftp->cwd($config{ftppath});
+		$ftp->put("/tmp/$config{ftpfile}");
+		$ftp->quit;
+	}
+
+    Gtk->exit(0);
+    return 0;
+}
+
+# mp3_ls
+# list the mp3s in a dir
+sub mp3_ls {
+   my $dir = shift;
+   my $ar_mp3s = shift;
+   opendir MP3,$dir;
+   push (@$ar_mp3s,grep /^.+?\.mp3$/i,map "$dir/$_",readdir MP3);
+   closedir MP3;
+
+}
+
+# randomize
+# fisher-yeats shuffle - thanks gnat
+sub randomize (\@) {
+    my $arref = shift;
+    my $i;
+    for ($i = @$arref; --$i;) {
+        my $j = int rand ($i+1);
+        next if $i == $j;
+        @$arref[$i,$j] = @$arref[$j,$i];
+    }
+}
+
+sub mp3_message_handler {
+    my $msg;
+    while ( $msg = $mp3->get_message ) {
+
+        my $code = $msg->{code};
+
+        if ( $code == &XA_MSG_NOTIFY_INPUT_POSITION ) {
+            my $percent = $msg->{position_offset}/$msg->{position_range};
+            $pbar->update($percent);
+        } elsif ( $code == &XA_MSG_NOTIFY_PLAYER_STATE ) {
+            cleanup_and_advance() if $msg->{state} == &XA_PLAYER_STATE_EOF;
+        }
+    }
+}
+
+sub cleanup_and_advance {
+    Gtk::Gdk->input_remove($input_tag);
+    if($count == $#mp3s) {
+        if($args{l}) {
+            $count = 0;
+			$playing = 0;
+            return play();
+        }
+    } else {
+        $count++;
+		$playing = 0;
+        return play();
+    }
+    return 1;
+}
+
+sub upload_status {
+    eval {
+        my $pid = fork();
+        unless($pid) {
+      	    eval { exec("upload_status '$mp3s[$count]'"); };
+        }
+    };
+    
+    if($@) {
+        print "Error: $@\n";
+        $config{useftp} = 0;
+    }
+}
+
+
+BEGIN {
+	eval {
+		open CONFIG, "$ENV{HOME}/.pmp3rc" or die;
+		while(<CONFIG>) {
+			chomp;
+			next if /^.*?#/;
+			next unless $_;
+			/^(.+?)\s+(.+?)$/;
+			$config{$1} = $2;
+		}
+		close CONFIG;
+	};
+	$config{useftp} = 0 if $@;
+}
+
+
+sub die_usage {
+   print <<EOF;
+
+--------------------------------------------
+Pmp3-gtk - The Perl MP3 Player
+
+usage: $0 <options> -d <starting dir>
+example: $0 -rlx -d /mp3/
+
+Options:
+    r: random
+    l: endless loop repeat
+    x: dont recurse
+    d: what dir to start in (REQUIRED)
+--------------------------------------------
+
+EOF
+    exit;
+}
+
+=head1 CVS INFO
+
+    $Log: pmp3_gtk,v $
+    Revision 1.7  2000/10/07 02:06:32  matt
+    moved into its own install dir
+
+    Revision 1.6  2000/10/04 14:04:15  matt
+    fixed zombie problem
+
+    Revision 1.5  2000/10/03 12:39:06  matt
+    fixed bug in cleanup routine
+
+    Revision 1.4  2000/10/03 02:43:03  matt
+    moved the status upload to an external program to solve the lag problem.
+
+    Revision 1.3  2000/10/03 01:51:14  matt
+    lots of gui changes. buttons rearranged. play now pauses and plays. next and previous now obey -l. volume control added. die_usage readded. etc. etc.
+
+
+=cut 

@@ -3,3 +3,10 @@ Makefile.PL
 README
 playmp3
 pmp3rc
+upload_status
+gtk/MANIFEST
+gtk/Makefile.PL
+gtk/README
+gtk/pmp3_gtk
+gtk/pmp3rc
+gtk/upload_status
