@@ -1,0 +1,428 @@
+#!/usr/bin/perl 
+
+=head1 NAME
+
+Pmp3 - The Perl MP3 Player
+
+=head1 DESCRIPTION
+
+A console mp3 player built in Perl.
+
+=head1 SYNOPSIS
+
+    playmp3 -rld /mp3
+
+=head1 COMMAND LINE OPTIONS
+
+=over 5
+
+=item B<r>
+   
+random
+
+=item B<l>
+
+endless loop repeat
+
+=item B<x>    
+    
+dont recurse
+
+=item B<d> 
+
+what dir to start in I<(REQUIRED)>
+    
+=back            
+
+=head1 COMMAND LINE INTERFACE
+
+=over 5
+
+=item B<b>
+    
+previous song
+
+=item B<n>
+
+next song
+
+=item B<p>
+
+pause
+
+=item B<q>
+
+quit         
+
+=item B<+>
+
+increase volume
+
+=item B<->
+
+decrease volume
+    
+=back                        
+
+=head1 AUTHOR
+
+Matt Cashner <matt@cre8tivegroup.com>
+
+=head1 COPYRIGHT
+
+All code Copyright (c) 2000 Matt Cashner.
+This code may be distributed under the terms of 
+Perl itself.
+
+=cut
+
+use strict;
+use vars qw(%config $VERSION $has_readkey);
+use MPEG::MP3Info;
+use MPEG::MP3Play qw(:msg :state);
+use Getopt::Std;
+use Term::Cap;
+require Net::FTP if $config{useftp};
+
+( $VERSION ) = '$Revision: 1.1.1.1 $ ' =~ /\$Revision:\s+([^\s]+)/;
+
+sub randomize (\@);
+
+local $| = 1;
+
+my (@mp3_genres, %args,$start,@mp3s);
+
+use_winamp_genres();
+
+getopts("hrlxd:", \%args);
+if(defined($args{h})) { die_usage(); }
+if(!defined($args{d})) { die_usage(); }
+ 
+$start = $args{d};
+chomp $start;
+
+if($start =~ m#^.*/$#) { chop $start; }
+
+mp3_ls($start,\@mp3s);
+
+unless ( defined($args{x}) ) {
+   my (@dirs,@dirs_tmp);
+   my $continue;
+
+   opendir DIR,$start;
+   push(@dirs, grep -d, map "$start/$_", readdir DIR);
+   closedir DIR;
+   foreach my $dir (@dirs) {
+	unless($dir =~ /\.\.?$/) {
+           opendir DIR,$dir;
+           push(@dirs,grep -d, map "$dir/$_",readdir DIR);
+	   closedir DIR;
+        }
+
+	if($dir =~ /\.\.?$/) { $dir =~ s/\/\.\.?//;}
+	mp3_ls($dir,\@mp3s);
+   }
+}
+
+
+LOOP:
+
+randomize(@mp3s) if defined $args{r};
+
+my $count = 0;
+my $back = 0;
+
+while($count < @mp3s) {
+    $back = 0;
+    my $mp3 = MPEG::MP3Play->new();
+    $mp3->open($mp3s[$count]);
+    $mp3->play;
+    print_status($mp3,$mp3s[$count]);
+    $count++ unless $back;
+}
+
+if( defined($args{l}) ) { goto LOOP; }
+
+exit(0);
+
+######################################################
+
+
+# BEGIN
+# initialize Term::ReadKey stuff and get the config
+# file.  all tucked nicely away in eval bundles so
+# we can either ignore errors or handle them nicely
+BEGIN {
+	eval qq{
+		use Term::ReadKey;
+		\$has_readkey = 1;
+	};
+    
+    eval { 
+        open CONFIG, "$ENV{HOME}/.pmp3rc" or die;
+        while (<CONFIG>) {
+            chomp;
+            next if /^.*?#/;
+            next unless $_;
+            /^(.+?)\s+(.+?)$/;
+            $config{$1} = $2;
+        }
+        close CONFIG;
+    };
+   $config{useftp} = 0 if $@;
+}
+
+
+
+# END
+# tidy up Term::Readkey stuff and ftp "not active"
+# message up to the server if useftp is set
+END {
+	print "\n\n";
+	$has_readkey and ReadMode(0);
+    if($config{useftp}) {
+        open(FILE,"+>/tmp/$config{ftpfile}"); 
+        print FILE "Pmp3 not active..."; 
+        close FILE;
+        my $ftp = Net::FTP->new($config{ftphost}, Passive => 1);
+        $ftp->login($config{ftpuser},$config{ftppassword});
+        $ftp->cwd($config{ftppath});
+        $ftp->put("/tmp/$config{ftpfile}");
+        $ftp->quit;
+    }
+}
+
+
+
+# randomize
+# fisher-yeats shuffle - thanks gnat
+sub randomize (\@) {
+    my $arref = shift;
+    my $i;
+    for ($i = @$arref; --$i;) {
+        my $j = int rand ($i+1);
+        next if $i == $j;
+        @$arref[$i,$j] = @$arref[$j,$i];
+    }
+}
+
+
+
+# print_status
+# This sub is entirely too complex. It handles the 
+# console GUI, remote status message, and key 
+# catching
+sub print_status {
+	my ($mp3,$mp3_loc) = @_;
+	my ($title,$artist,$album,$year,$comment,$genre);
+	my ($minutes,$secs,$layer,$bitrate,$freq,$mp3_version,$stereo);
+	my ($tag,$info);
+	
+	clear_screen();
+                
+	$tag = get_mp3tag($mp3_loc);
+	$info = get_mp3info($mp3_loc);
+
+	foreach (qw(TITLE ARTIST ALBUM)) {
+		$tag->{$_} = 'Unknown' unless $tag->{$_};
+	}
+
+	$minutes = $info->{MM} || '??';
+	$secs = $info->{SS} || '??';	
+	if(($secs ne '??') && ($secs !~ /[0-9][0-9]/)) { $secs = "0$secs"; }
+
+	($layer = '?') unless $layer = $info->{LAYER};
+	($bitrate = '?') unless $bitrate = $info->{BITRATE};
+	($freq = '?') unless $freq = $info->{FREQUENCY}; 
+	($mp3_version = '?') unless $mp3_version = $info->{VERSION};
+	
+	if($info->{STEREO} == 1) { $stereo = 'STEREO'; }
+	else { $stereo = 'MONO'; }
+	
+	format Output = 
+The Perl MP3 Player
+====================
+Press 'n' for the next track, 'b' for the previous track, or 'q' to quit.
+Press '+' to increase volume, '-' to decrease volume.
+
+Current MP3 Info:
+-----------------------------------------------------------------------------
+Title: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Artist: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+       $tag->{TITLE},		   		           $tag->{ARTIST}
+Album: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Year: @<<<<
+       $tag->{ALBUM},                        $tag->{YEAR}
+Comment: @<<<<<<<<<<<<<<<<<<<<<<<<<<<  Genre: @<<<<<<<<<<<<<
+         $tag->{COMMENT},                     $tag->{GENRE}
+Total Time: @>>:@<<
+            $info->{MM},$secs
+-----------------------------------------------------------------------------
+.
+
+    my $filename_str = "Filename: $mp3_loc";
+
+	format FILE = 
+The Perl MP3 Player
+====================
+
+Current MP3 Info:
+-----------------------------------------------------------------------------
+Title: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Artist: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+       $tag->{TITLE},                          $tag->{ARTIST}
+Album: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Year: @<<<<
+       $tag->{ALBUM},                        $tag->{YEAR}
+Comment: @<<<<<<<<<<<<<<<<<<<<<<<<<<<  Genre: @<<<<<<<<<<<<<
+         $tag->{COMMENT},                     $tag->{GENRE}
+Total Time: @>>:@<<
+            $info->{MM},$secs
+-----------------------------------------------------------------------------
+@<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+$filename_str
+.
+
+	{ local $~ = 'Output'; write; }
+    if($config{useftp})	{ 	
+        open(FILE,"+>/tmp/$config{ftpfile}"); 
+        write FILE; 
+        close FILE;
+		my $ftp = Net::FTP->new($config{ftphost}, Passive => 1);
+		$ftp->login($config{ftpuser},$config{ftppassword});
+		$ftp->cwd($config{ftppath});
+		$ftp->put("/tmp/$config{ftpfile}");
+		$ftp->quit;
+	}
+		
+	print "\nPlaying MPEG stream from $mp3_loc\n";
+	print "MPEG Layer $layer Version $mp3_version, $bitrate kbits/s, $freq Hz, $stereo\n";
+		
+	$has_readkey and ReadMode(4);
+	
+	my $volume = 80;
+	$mp3->volume($volume, 100, 50);
+
+	my $finish = 0;
+    my $paused = 0;
+	while ( not $finish ) {
+		my $msg = $mp3->get_message_wait(50000);
+        
+		if ( defined $msg ) {
+			my $code = $msg->{code};
+		
+			if ( $code == &XA_MSG_NOTIFY_INPUT_TIMECODE ) {				
+				print "\r";
+				printf "Current Time: %02d:%02d:%02d",
+					$msg->{timecode_h},
+					$msg->{timecode_m},
+					$msg->{timecode_s}
+			} elsif ( $code == &XA_MSG_NOTIFY_PLAYER_STATE ) {
+				$finish = 1 if $msg->{state} == &XA_PLAYER_STATE_EOF;
+            }
+		}
+	
+		if ( $has_readkey ) {
+			my $key = ReadKey(-1) || '';
+            if($key eq 'q') {
+                exit;
+            } elsif ($key eq 'p') {
+                if($paused) {
+                    $paused = 0;
+                    $mp3->play();
+                } else {
+                    $paused = 1;
+                    $mp3->pause;
+                }
+            } elsif($key eq 'b') {
+                $back++;
+                $count-- unless $count == 0;
+                $finish = 1;
+            } elsif($key eq 'n') {
+                $finish = 1;
+            } elsif ( $key eq '+') {
+				$volume += 5;
+				$volume = 100 if $volume > 100;
+				$mp3->volume ($volume);
+			} elsif ( $key eq '-' ) {
+				$volume -= 5;
+				$volume = 0 if $volume < 0;
+				$mp3->volume ($volume);
+			}
+		}
+	}
+
+	$has_readkey and ReadMode(0);
+}
+
+
+
+# clear_screen
+# um, clears the screen
+# requires POSIX which is a piece of ickiness
+# but there's no better way to do this that
+# i know of. 
+sub clear_screen {
+   no strict;
+   my $OSPEED = 9600;
+   eval {
+      require POSIX;
+      my $termios = POSIX::Termios->new();
+      $termios->getattr;
+      $OSPEED = $termios->getospeed;
+   };
+   my $terminal = Term::Cap->Tgetent({OSPEED=>$OSPEED});
+   $terminal->Tputs('cl', 1, STDOUT);
+}	
+
+
+
+# mp3_ls
+# list the mp3s in a dir
+sub mp3_ls {
+   my $dir = shift;
+   my $ar_mp3s = shift;
+   opendir MP3,$dir;
+   push (@$ar_mp3s,grep /^.+?\.mp3$/i,map "$dir/$_",readdir MP3);
+   closedir MP3;
+
+}
+
+
+
+# die_usage
+# keel over and print usage info
+sub die_usage {
+   print <<EOF;
+
+--------------------------------------------
+Pmp3 - The Perl MP3 Player
+
+usage: $0 <options> -d <starting dir>
+example: $0 -rlx -d /mp3/
+
+Options:
+    r: random
+    l: endless loop repeat
+    x: dont recurse
+    d: what dir to start in (REQUIRED)
+
+Control keys:
+    b: previous song
+	n: next song
+    p: pause
+    q: quit
+    
+    +: increase volume
+    -: decrease volume
+-------------------------------------------
+EOF
+    exit;
+}
+
+=head1 CVS INFO
+
+    $Id: playmp3,v 1.1.1.1 2000/09/24 21:22:05 matt Exp $
+
+    $Log: playmp3,v $
+    Revision 1.1.1.1  2000/09/24 21:22:05  matt
+    First release
+
+
+=cut
