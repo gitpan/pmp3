@@ -2,7 +2,7 @@ use ExtUtils::MakeMaker;
 
 WriteMakefile(
     NAME		    => 'pmp3',
-    VERSION_FROM	=> 'playmp3',
+    VERSION_FROM	=> 'VERSION',
     AUTHOR          => 'Matt Cashner <matt@cre8tivegroup.com>',
     ABSTRACT        => 'A Perl MP3 Player',
     PREFIX          => '/usr/local',

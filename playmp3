@@ -85,7 +85,7 @@ use Getopt::Std;
 use Term::Cap;
 require Net::FTP if $config{useftp};
 
-( $CVSVERSION ) = '$Revision: 1.5 $ ' =~ /\$Revision:\s+([^\s]+)/;
+( $CVSVERSION ) = '$Revision: 1.6 $ ' =~ /\$Revision:\s+([^\s]+)/;
 
 $VERSION = "1.3";
 
@@ -131,10 +131,12 @@ randomize(@mp3s) if defined $args{r};
 
 my $count = 0;
 my $back = 0;
+my $mp3 = MPEG::MP3Play->new();
+my $volume = 80;
+$mp3->volume($volume, 100, 50);
 
 while($count < @mp3s) {
     $back = 0;
-    my $mp3 = MPEG::MP3Play->new();
     $mp3->open($mp3s[$count]);
     
     upload_status($mp3s[$count]) if $config{useftp};
@@ -295,9 +297,6 @@ Total Time: @>>:@<<
 	print "MPEG Layer $layer Version $mp3_version, $bitrate kbits/s, $freq Hz, $stereo\n";
 		
 	$has_readkey and ReadMode(4);
-	
-	my $volume = 80;
-	$mp3->volume($volume, 100, 50);
 
 	my $finish = 0;
     my $paused = 0;
@@ -417,9 +416,12 @@ EOF
 
 =head1 CVS INFO
 
-    $Id: playmp3,v 1.5 2000/10/07 02:28:19 matt Exp $
+    $Id: playmp3,v 1.6 2000/10/08 00:32:14 matt Exp $
 
     $Log: playmp3,v $
+    Revision 1.6  2000/10/08 00:32:14  matt
+    fixed stupid bug where the volume would get reset to 80 on every new mp3
+
     Revision 1.5  2000/10/07 02:28:19  matt
     fixed interface freeze problem by moving status upload to an execd program
 

@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Header: /cvsroot/pmp3/gtk/pmp3_gtk,v 1.7 2000/10/07 02:06:32 matt Exp $
+# $Header: /home/matt/cvsroot/pmp3/gtk/pmp3_gtk,v 1.11 2000/10/21 20:43:58 matt Exp $
 
 use strict;
 use Gtk;
@@ -8,10 +8,7 @@ use MPEG::MP3Play qw(:msg :state);
 use Getopt::Std;
 use Net::FTP;
 use vars qw(%config $VERSION);
-$VERSION = '0.01';
-
-my $mp3 = MPEG::MP3Play->new();
-$mp3->volume(80);
+$VERSION = '0.04';
 
 sub randomize (\@);
 
@@ -30,6 +27,13 @@ $start = $args{d};
 chomp $start;
 
 if($start =~ m#^.*/$#) { chop $start; }
+
+# Detach from the terminal
+fork and exit;
+
+my $mp3 = MPEG::MP3Play->new();
+$mp3->volume(80);
+
 
 mp3_ls($start,\@mp3s);
 
@@ -76,7 +80,8 @@ my $window = Gtk::Window->new( "toplevel" );
 my $mainbox = Gtk::VBox->new(0,5);
 
 my $topbuttons = Gtk::HButtonBox->new();
-my $bottombuttons = Gtk::HButtonBox->new();
+my $middle = Gtk::HButtonBox->new();
+my $toolbar = Gtk::Toolbar->new('horizontal','icons');
 
 my $vcolumnl = Gtk::VBox->new(1,5);
 my $vcolumnr = Gtk::VBox->new(1,5);
@@ -84,17 +89,20 @@ my $vcolumnr = Gtk::VBox->new(1,5);
 my $filebar = Gtk::HButtonBox->new();
 my $progress = Gtk::HButtonBox->new();
 my $volumebar = Gtk::HButtonBox->new();
+my $handlebox = Gtk::HandleBox->new();
 
 my $volumeadj = Gtk::Adjustment->new(80,0,100,5,5,0);
 $volumeadj->signal_connect("value_changed",\&change_volume);
 
 my $volume = Gtk::HScale->new($volumeadj);
 
-my $back = Gtk::Button->new( "<<" );
-my $play = Gtk::Button->new( ">" );
-my $next = Gtk::Button->new( ">>" );
-my $quit = Gtk::Button->new( "X" );
-my $stop = Gtk::Button->new( "[ ]" );
+my $back = Gtk::Button->new( " < < " );
+my $play = Gtk::Button->new( "  >  " );
+my $next = Gtk::Button->new( " > > " );
+my $quit = Gtk::Button->new( "  X  " );
+my $stop = Gtk::Button->new( " [ ] " );
+my $setdetails = Gtk::ToggleButton->new( "Edit ID3" );
+my $about = Gtk::Button->new("  ?  "); 
 my $pbar = Gtk::ProgressBar->new();
 
 my $title = Gtk::Entry->new(32);
@@ -114,9 +122,12 @@ $window->border_width( 10 );
 
 $topbuttons->set_spacing_default(2);
 
-$bottombuttons->set_layout('spread');
-$bottombuttons->set_spacing(0);
-$bottombuttons->set_child_size(20,20);
+$volumebar->set_layout('spread');
+$volumebar->set_spacing(5);
+$volumebar->set_child_size(20,20);
+
+$middle->set_layout('spread');
+$middle->set_child_size(160,20);
 
 $progress->set_child_size(200,10);
 $pbar->set_usize(200,10);
@@ -127,24 +138,23 @@ $title->set_editable(0);
 
 $title->set_text($tag->{TITLE});
 $title->set_editable(0);
-
 $artist->set_text($tag->{ARTIST});
 $artist->set_editable(0);
 $album->set_text($tag->{ALBUM});
 $album->set_editable(0);
-
 $year->set_text($tag->{YEAR});
 $year->set_editable(0);
 
-$window->set_title('PMP3 Alpha');
+$window->set_title('PMP3 Gtk');
 $window->signal_connect( "delete_event", \&quit );   
 $back->signal_connect( "clicked", \&back );
 $play->signal_connect( "clicked", \&play );
 $next->signal_connect( "clicked", \&next );
 $stop->signal_connect( "clicked", \&stop );
+$setdetails->signal_connect( "clicked", \&editdetails );
 
 $quit->signal_connect("clicked", \&quit );
-
+$about->signal_connect("clicked", \&about);
 
 
 $title_frame->add($title);
@@ -159,27 +169,41 @@ $vcolumnl->add($album_frame);
 $vcolumnr->add($artist_frame);
 $vcolumnr->add($year_frame);
 
-$bottombuttons->add($back);
-$bottombuttons->add($play);
-$bottombuttons->add($stop);
-$bottombuttons->add($next);
-$bottombuttons->add($quit);
+$toolbar->border_width(5);
+$toolbar->set_space_size(7);
+$toolbar->append_widget($back,'Back','back');
+$toolbar->append_space;
+$toolbar->append_widget($play,'Play/Pause','play');
+$toolbar->append_space;
+$toolbar->append_widget($stop,'Stop','stop');
+$toolbar->append_space;
+$toolbar->append_widget($next,'Next','next');
+$toolbar->append_space;
+$toolbar->append_widget($quit,'Quit','quit');
+$toolbar->append_space;
+$toolbar->append_widget($about,'About','about');
+$toolbar->set_tooltips(1);
 
 $topbuttons->add($vcolumnl);
 $topbuttons->add($vcolumnr);
 
 $progress->add($pbar);
 $filebar->add($file_frame);
+
+$volumebar->add($setdetails);
 $volumebar->add($volume);
+
+$handlebox->add($toolbar);
+
+$middle->add($handlebox);
 
 $mainbox->add($progress);
 $mainbox->add($filebar);
 $mainbox->add($topbuttons);
-$mainbox->add($bottombuttons);
+$mainbox->add($middle);
 $mainbox->add($volumebar);
 
 $window->add($mainbox);
-
 
 $window->show_all();
 
@@ -192,6 +216,48 @@ Gtk->main();
 exit( 0 );
 
 #######################################################################
+sub about {
+    my $dialog = Gtk::Dialog->new();
+    $dialog->set_border_width(5);
+    
+    my $close = Gtk::Button->new("Close");
+    $close->signal_connect("clicked",\&close,$dialog);
+    $close->show();
+    
+    my $label = Gtk::Label->new("Pmp3 GTK $VERSION\nby Matt Cashner\nhttp://matt.cre8tivegroup.com/pmp3");
+    $dialog->vbox->add($label);
+    $label->show();
+    
+    $dialog->action_area->pack_start($close,1,1,0);
+    $dialog->set_modal(1);
+    $dialog->show();
+}
+    
+sub close {
+    my($button,$window) = @_;
+    $window->hide;
+    return 0;
+}
+    
+sub editdetails {
+    my $togglebutton = shift;
+    if ( $togglebutton->active ) { #down
+        $title->set_editable(1);
+        $artist->set_editable(1);
+        $album->set_editable(1);
+        $year->set_editable(1);
+        $togglebutton->child->set("Save ID3");
+    } else { #up
+        $title->set_editable(0);
+        $artist->set_editable(0);
+        $album->set_editable(0);
+        $year->set_editable(0);
+        setdetails();
+        $togglebutton->child->set("Edit ID3");
+    }
+}
+
+
 sub change_volume {
     my $adj = shift;
     $mp3->volume($adj->value);
@@ -200,28 +266,22 @@ sub change_volume {
 sub play {
     if($paused && $playing) {
         $paused = 0;
+        
+        $play->child->set(" | | ");
         $mp3->play();
     } elsif ($playing) {
         $paused = 1;
+        $play->child->set("  >  ");
         $mp3->pause();
-    } else {        
+    } else { 
+        $setdetails->set_active(0);       
+        $play->child->set(" | | ");
         $paused = 0;
         $playing = 1;
         my $input_fd = $mp3->get_command_read_pipe;
         $input_tag = Gtk::Gdk->input_add ($input_fd, 'read', \&mp3_message_handler);
     
-        $tag = get_mp3tag($mp3s[$count]);
-    
-        $title->set_text($tag->{TITLE});
-        $artist->set_text($tag->{ARTIST});
-        $album->set_text($tag->{ALBUM});
-        $year->set_text($tag->{YEAR});
-	
-        ($filename) = $mp3s[$count] =~ m#^.*/(.+?)$#;
-	    $tag->{filename} = $filename;
-    
-	    $file->set_text($filename);
-    
+            
         $mp3->open($mp3s[$count]);
         $mp3->play;
     
@@ -238,8 +298,14 @@ sub back {
     } else {
         $count--;
     }
-    $playing = 0;
-    return play();
+    if($playing) {
+        Gtk::Gdk->input_remove($input_tag);
+        $playing = 0;
+        update_window();
+        return play();
+    } else {
+        return update_window();
+    }
 }
 
 sub next {
@@ -248,14 +314,46 @@ sub next {
     } else {
         $count++;
     }
-    $playing = 0;
-    return play();
+    if($playing) {
+        Gtk::Gdk->input_remove($input_tag);
+        $playing = 0;
+        update_window();
+        return play();
+    } else {
+        return update_window();
+    }
+
 } 
 
 sub stop {
+    $play->child->set(">");
     $mp3->stop();
     $playing = 0;
     $pbar->update(0);
+}
+
+sub update_window {
+    $tag = get_mp3tag($mp3s[$count]);
+    
+    $title->set_text($tag->{TITLE});
+    $artist->set_text($tag->{ARTIST});
+    $album->set_text($tag->{ALBUM});
+    $year->set_text($tag->{YEAR});
+	
+    ($filename) = $mp3s[$count] =~ m#^.*/(.+?)$#;
+	$tag->{filename} = $filename;
+    
+    $file->set_text($filename);
+    return 1;
+}
+
+sub setdetails {
+    my ($filename) = $mp3s[$count];
+    $tag->{TITLE} = $title->get_text;
+    $tag->{ARTIST} = $artist->get_text;
+    $tag->{ALBUM} = $album->get_text;
+    $tag->{YEAR} = $year->get_text;
+    set_mp3tag($filename, $tag);
 }
 
 ### Callback function to close the window
@@ -263,7 +361,6 @@ sub quit {
     $mp3->stop;
     
 	if($config{useftp}) {
-		print "uploading inactive status message..\n";
 		open(FILE,"+>/tmp/$config{ftpfile}");
 		print FILE "Pmp3-gtk not active...";
 		close FILE;
@@ -386,6 +483,18 @@ EOF
 =head1 CVS INFO
 
     $Log: pmp3_gtk,v $
+    Revision 1.11  2000/10/21 20:43:58  matt
+    moved fork until after cli error checking
+
+    Revision 1.10  2000/10/21 20:38:42  matt
+    rapid scrolling bug fixed. bout time dont ya think?
+
+    Revision 1.9  2000/10/21 20:03:59  matt
+    buttons are now a tearable toolbar
+
+    Revision 1.8  2000/10/21 18:45:45  matt
+    lots of gui changes and things
+
     Revision 1.7  2000/10/07 02:06:32  matt
     moved into its own install dir
 
