@@ -38,9 +38,10 @@ COMMAND LINE INTERFACE
     -    decrease volume
 
 AUTHOR
-    Matt Cashner <matt@cre8tivegroup.com>
+    Matt Cashner (eek@eekeek.org)
 
 COPYRIGHT
-    All code Copyright (c) 2000 Matt Cashner. This code may be distributed
-    under the terms of Perl itself.
+    Copyright (c) 2000-2001 Matt Cashner. All Rights Reserved. This 
+    product may be distributed under the MIT License (see LICENSE, 
+    included with this distribution).
 

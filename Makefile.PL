@@ -3,15 +3,14 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
     NAME		    => 'pmp3',
     VERSION_FROM	=> 'VERSION',
-    AUTHOR          => 'Matt Cashner <matt@cre8tivegroup.com>',
+    AUTHOR          => 'Matt Cashner (eek@eekeek.org)',
     ABSTRACT        => 'A Perl MP3 Player',
     PREFIX          => '/usr/local',
-    PM              => {'playmp3' => '${INST_BIN}/playmp3'},
-    MAN3PODS        => {'playmp3' => '${INST_MAN3DIR}/playmp3.3'},
+    PM              => {'pmp3' => '${INST_BIN}/pmp3'},
+    MAN3PODS        => {'pmp3' => '${INST_MAN3DIR}/pmp3.3'},
     PREREQ_PM		=> { 'MPEG::MP3Info' => 0,
                          'MPEG::MP3Play' => 0,
                          'Getopt::Std'   => 0,
-                         'Term::ReadKey' => 0,
                        },
 	
 );
@@ -27,9 +26,9 @@ pure_site_install ::
 		$(INST_MAN3DIR) $(INSTALLMAN3DIR)
 
 uninstall : 
-	}.$self->{NOECHO}.q{echo Deleting $(INSTALLBIN)/playmp3 
-	}.$self->{NOECHO}.q{echo Deleting $(INSTALLMAN3DIR)/playmp3.3
-	}.$self->{NOECHO}.q{rm $(INSTALLBIN)/playmp3 $(INSTALLMAN3DIR)/playmp3.3
+	}.$self->{NOECHO}.q{echo Deleting $(INSTALLBIN)/pmp3 
+	}.$self->{NOECHO}.q{echo Deleting $(INSTALLMAN3DIR)/pmp3.3
+	}.$self->{NOECHO}.q{rm $(INSTALLBIN)/pmp3 $(INSTALLMAN3DIR)/pmp3.3
 };
 
 

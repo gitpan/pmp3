@@ -1,0 +1,931 @@
+#!/usr/bin/perl
+# $Header: /cvsroot/pmp3/pmp3,v 1.4 2001/07/04 19:51:35 matt Exp $
+package Pmp3::BASE;
+
+BEGIN { 
+    foreach my $pm (qw(MPEG::MP3Info MPEG::MP3Play)) {
+        eval "use $pm";
+        die "$pm not found. Please install this." if $@;
+    }
+}
+use strict;
+use Getopt::Std;
+use vars qw($VERSION $consoleui $gtkui $miniui);
+local $| = 1;
+
+$VERSION = '1.6';
+
+$SIG{CHLD} = 'IGNORE';
+
+# Client code#{{{
+# ============
+
+$miniui = '#{{{
+package Pmp3::Gtk::Mini;
+use base qw(Pmp3::Gtk);
+use MPEG::MP3Play qw(:msg :state);
+use MPEG::MP3Info;
+use Gtk;
+ 
+sub launch_ui {
+    my $self = shift;
+    $self->{mini} = 1;
+     
+	my $tag = get_mp3tag($self->{track});
+
+	Gtk->init();
+	Gtk->set_locale();
+
+    # WIDGET CREATION
+    my $gtk = {};
+    $gtk->{window} = Gtk::Window->new(\'toplevel\');
+
+    $gtk->{table} = Gtk::Table->new(3,1,0);
+    $gtk->{buttons} = Gtk::HButtonBox->new();
+
+    $gtk->{progress} = Gtk::ProgressBar->new();
+    $gtk->{$_} = Gtk::Button->new() foreach (qw(back play stop next quit about));
+    $gtk->{text} = Gtk::Entry->new(66);
+
+
+    #WIDGET INIT
+    $gtk->{window}->border_width(3);
+    $gtk->{window}->set_default_size(203,100);
+    $gtk->{window}->set_policy(0,0,0);
+    $gtk->{window}->set_title(\'Pmp3\');
+    
+    $gtk->{progress}->set_usize(150,8);
+
+    $gtk->{buttons}->set_layout(\'spread\');
+    $gtk->{buttons}->set_spacing(0);
+    $gtk->{buttons}->set_child_size(10,10);
+
+    my $textline;
+    if($tag->{TITLE} && $tag->{ARTIST}) {
+        $textline = $tag->{TITLE}." - ". $tag->{ARTIST};
+    } else {
+        $textline = $self->{track};
+    }
+    $gtk->{text}->set_editable(0);    
+    $gtk->{text}->set_text($textline);
+
+
+    $gtk->{window}->realize();
+
+
+    ##ADD PIXMAPS TO BUTTONS
+   	my %pixmaps = Pmp3::Gtk->create_pixmaps($gtk->{window});
+	$gtk->{back}->add($pixmaps{back});
+	$gtk->{play}->add($pixmaps{pstart});
+	$gtk->{next}->add($pixmaps{next});
+	$gtk->{quit}->add($pixmaps{close});
+	$gtk->{stop}->add($pixmaps{stop});
+	$gtk->{about}->add($pixmaps{q});
+    
+    $self->{pixmaps} = \%pixmaps;
+
+
+    #CONSTRUCT GUI    
+    $gtk->{buttons}->add($gtk->{$_}) foreach (qw(back play stop next quit about));
+
+    my $table_options = [ \'fill\',\'shrink\',\'expand\' ];
+	$gtk->{table}->attach($gtk->{progress},0,1,0,1,[],[],0,0);
+	$gtk->{table}->attach($gtk->{text},0,1,1,2,$table_options,$table_options,0,0);
+    $gtk->{table}->attach($gtk->{buttons},0,1,2,3,[],[],0,0);
+
+    $gtk->{window}->add($gtk->{table});
+
+    
+	#SIGNAL CONNECTION	
+	$gtk->{window}->signal_connect( "delete_event", sub { $self->quit(); }  );  
+	$gtk->{quit}->signal_connect( "clicked", sub { $self->quit(); } );
+	$gtk->{back}->signal_connect( "clicked", sub { $self->back(); } );
+	$gtk->{next}->signal_connect( "clicked", sub { $self->next(); } );
+	$gtk->{play}->signal_connect( "clicked", sub { $self->play(); } );
+	$gtk->{stop}->signal_connect( "clicked", sub { $self->stop(); } );
+	$gtk->{about}->signal_connect( "clicked", sub { $self->update_ui(\'about\'); } );
+
+    #LOOP INIT
+    $gtk->{window}->show_all();
+    $self->{gtk} = $gtk;
+    Gtk->main();
+
+}
+';
+#}}}
+
+$consoleui = '#{{{
+package Pmp3::Console;
+use base qw(Pmp3);
+use MPEG::MP3Play qw(:msg :state);
+use MPEG::MP3Info; 
+
+sub launch_ui {
+	my $self = shift;
+	eval "use Term::ReadKey; use Term::Cap;";
+	if($@) { $self->{has_readkey} = 0; }
+	else { $self->{has_readkey} = 1; }
+
+	while(1) {
+		$self->clear_screen();
+		my ($title,$artist,$album,$year,$comment,$genre);
+		my ($minutes,$secs,$layer,$bitrate,$freq,$mp3_version,$stereo);
+
+		my $tag = get_mp3tag($self->{track});
+		my $info = get_mp3info($self->{track});
+
+		foreach (qw(TITLE ARTIST ALBUM)) {
+			$tag->{$_} = \'Unknown\' unless $tag->{$_};
+		}
+
+	    if($info->{MM}) {
+	        $minutes = $info->{MM};
+	    } else {
+	        $minutes = 0;
+	    } 
+
+	    if($info->{SS}) {
+	        $secs = $info->{SS};
+	    } else {
+	        $secs = 0;
+	    } 
+    
+		if($secs !~ /[0-9][0-9]/) { $secs = "0$secs"; }
+
+		($layer = \'?\') unless $layer = $info->{LAYER};
+		($bitrate = \'?\') unless $bitrate = $info->{BITRATE};
+		($freq = \'?\') unless $freq = $info->{FREQUENCY}; 
+		($mp3_version = \'?\') unless $mp3_version = $info->{VERSION};
+		$tag->{COMMENT} ||= \' \';
+		$tag->{GENRE} ||= \' \';	
+		if($info->{STEREO} == 1) { $stereo = \'STEREO\'; }
+		else { $stereo = \'MONO\'; }
+		
+		my $header = qq(
+The Perl MP3 Player $Pmp3::BASE::VERSION
+==========================
+Press \'n\' for the next track, \'b\' for the previous track, or \'q\' to quit.
+Press \'+\' to increase volume, \'-\' to decrease volume.
+
+);
+		
+		format Output =
+Current MP3 Info:
+-----------------------------------------------------------------------------
+Title: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Artist: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+       $tag->{TITLE},		   		           $tag->{ARTIST}
+Album: @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  Year: @<<<<
+       $tag->{ALBUM},                        $tag->{YEAR}
+Comment: @<<<<<<<<<<<<<<<<<<<<<<<<<<<  Genre: @<<<<<<<<<<<<<
+         $tag->{COMMENT},                     $tag->{GENRE}
+Total Time: @>>:@<<
+            $info->{MM},$secs
+-----------------------------------------------------------------------------
+.
+
+		{ local $~ = \'Output\'; print $header; write; }
+	    my ($file) = $self->{track} =~ m#.*/(.+?)$#;	
+		print "\nPlaying MPEG stream from $file\n";
+		print "MPEG Layer $layer Version $mp3_version, $bitrate kbits/s, $freq Hz, $stereo\n";
+		
+		$self->{has_readkey} and ReadMode(4);
+	
+		$self->{mp3}->open($self->{track});
+		$self->{mp3}->play();
+		my $finish = 0;
+	    my $paused = 0;
+		while ( not $finish ) {
+			my $msg = $self->{mp3}->get_message_wait(50000);
+        
+			if ( defined $msg ) {
+				my $code = $msg->{code};
+		
+				if ( $code == &XA_MSG_NOTIFY_INPUT_TIMECODE ) {				
+					print "\r";
+					printf "Current Time: %02d:%02d:%02d",
+						$msg->{timecode_h},
+						$msg->{timecode_m},
+						$msg->{timecode_s}
+				} elsif ( $code == &XA_MSG_NOTIFY_PLAYER_STATE ) {
+                    if ($msg->{state} == &XA_PLAYER_STATE_EOF) {
+                        $finish=1;
+                        $self->next_mp3();
+                    }                                                                                                                    
+    	        }
+			}
+	
+			if ( $self->{has_readkey} ) {
+				my $key = ReadKey(-1) || \'\';
+        	    if($key eq \'q\') {
+					$self->{mp3}->stop();
+					ReadMode(0);
+					print "\n\n";
+        	        exit;
+        	    } elsif ($key eq \'p\') {
+        	        if($paused) {
+        	            $paused = 0;
+        	            $self->{mp3}->play();
+        	        } else {
+   	            	    $paused = 1;
+                	    $self->{mp3}->pause;
+                	}
+            	} elsif($key eq \'b\') {
+					$self->prev_mp3();
+            	    $finish = 1;
+            	} elsif($key eq \'n\') {
+					$self->next_mp3();
+					$finish = 1;
+            	} elsif ( $key eq \'+\') {
+					$self->{volume} += 5;
+					$self->{volume} = 100 if $self->{volume} > 100;
+					$self->{mp3}->volume ($self->{volume});
+				} elsif ( $key eq \'-\' ) {
+					$self->{volume} -= 5;
+					$self->{volume} = 0 if $self->{volume} < 0;
+					$self->{mp3}->volume ($self->{volume});
+				}
+			}
+		}
+		$self->{has_readkey} && ReadMode(0);
+		$self->{mp3}->stop();
+	}
+}
+	
+# clear_screen
+# um, clears the screen
+# requires POSIX which is a piece of ickiness
+# but there\'s no better way to do this that
+# i know of. 
+sub clear_screen {
+   no strict;
+   my $OSPEED = 9600;
+   eval {
+      require POSIX;
+      my $termios = POSIX::Termios->new();
+      $termios->getattr;
+      $OSPEED = $termios->getospeed;
+   };
+   my $terminal = Term::Cap->Tgetent({OSPEED=>$OSPEED});
+   $terminal->Tputs(\'cl\', 1, STDOUT);
+}	
+
+
+sub update_ui {
+	# not needed for this subclass - but i\'ve overloaded it anyway to avoid error messages.
+}
+';
+#}}}
+
+$gtkui = '#{{{
+package Pmp3::Gtk;
+use base qw(Pmp3);
+use MPEG::MP3Play qw(:msg :state);
+use MPEG::MP3Info; 
+use Gtk;
+
+sub setvolume {
+	my $vol = shift;
+	my $self = shift;
+	$self->{mp3}->volume($vol->value)
+}
+
+sub launch_ui {
+	my $self = shift;
+	
+	my $tag = get_mp3tag($self->{track});
+	my $info = get_mp3info($self->{track});
+
+	Gtk->init();
+	Gtk->set_locale();
+
+	#GTK SETUP
+	my $gtk = {};
+	$gtk->{window} = Gtk::Window->new(\'toplevel\');
+	$gtk->{main} = Gtk::VBox->new(0,5);
+
+	$gtk->{table} = Gtk::Table->new(6,2,0);
+	
+	$gtk->{handlebox} = Gtk::HandleBox->new();
+	$gtk->{toolbar} = Gtk::Toolbar->new(\'horizontal\',\'icons\');
+
+
+	$gtk->{volumeadj} = Gtk::Adjustment->new(80,0,100,5,5,0);
+	$gtk->{volume} = Gtk::HScale->new($gtk->{volumeadj});
+
+	$gtk->{$_} = Gtk::Button->new() foreach (qw(back next play quit stop about));
+
+	$gtk->{setdetails} = Gtk::ToggleButton->new("Edit ID3");
+	$gtk->{progress} = Gtk::ProgressBar->new();
+
+	$gtk->{title} = Gtk::Entry->new(32);
+	$gtk->{artist} = Gtk::Entry->new(32);
+	$gtk->{album} = Gtk::Entry->new(32);
+	$gtk->{year} = Gtk::Entry->new(4);
+	$gtk->{file} = Gtk::Entry->new(100);
+
+	$gtk->{title_frame} = Gtk::Frame->new("Title");
+	$gtk->{artist_frame} = Gtk::Frame->new("Artist");
+	$gtk->{album_frame} = Gtk::Frame->new("Album");
+	$gtk->{year_frame} = Gtk::Frame->new("Year");
+	$gtk->{file_frame} = Gtk::Frame->new("Filename");
+
+
+	#GTK WIDGET INIT
+	$gtk->{window}->border_width(10);
+	$gtk->{window}->set_title("Pmp3");
+	
+	$gtk->{volume}->set_value_pos(\'right\');
+
+    my ($file) = $self->{track} =~ m#^.*/(.+?)$#;
+	$gtk->{file}->set_text($file);
+	$gtk->{title}->set_text($tag->{TITLE});
+	$gtk->{artist}->set_text($tag->{ARTIST});
+	$gtk->{album}->set_text($tag->{ALBUM});
+	$gtk->{year}->set_text($tag->{YEAR});
+
+	$gtk->{$_}->set_editable(0) foreach (qw(file title artist album year));
+
+    $gtk->{toolbar}->set_usize(117,20);
+	$gtk->{progress}->set_usize(200,10);
+	$gtk->{window}->realize();
+
+	# ADD PIXMAPS TO BUTTONS
+	my %pixmaps = create_pixmaps($gtk->{window});
+	$gtk->{back}->add($pixmaps{back});
+	$gtk->{play}->add($pixmaps{pstart});
+	$gtk->{next}->add($pixmaps{next});
+	$gtk->{quit}->add($pixmaps{close});
+	$gtk->{stop}->add($pixmaps{stop});
+	$gtk->{about}->add($pixmaps{q});
+    
+    $self->{pixmaps} = \%pixmaps;
+
+	#CONSTRUCT GUI
+	$gtk->{title_frame}->add($gtk->{title});
+	$gtk->{artist_frame}->add($gtk->{artist});
+	$gtk->{album_frame}->add($gtk->{album});
+	$gtk->{year_frame}->add($gtk->{year});
+	$gtk->{file_frame}->add($gtk->{file});
+
+	$gtk->{toolbar}->border_width(5);
+	$gtk->{toolbar}->set_space_size(7);
+	$gtk->{toolbar}->append_widget($gtk->{back},\'Back\',\'back\');
+	$gtk->{toolbar}->append_space;
+	$gtk->{toolbar}->append_widget($gtk->{play},\'Play/Pause\',\'play\');
+	$gtk->{toolbar}->append_space;
+	$gtk->{toolbar}->append_widget($gtk->{stop},\'Stop\',\'stop\');
+	$gtk->{toolbar}->append_space;
+	$gtk->{toolbar}->append_widget($gtk->{next},\'Next\',\'next\');
+	$gtk->{toolbar}->append_space;
+	$gtk->{toolbar}->append_widget($gtk->{quit},\'Quit\',\'quit\');
+	$gtk->{toolbar}->append_space;
+	$gtk->{toolbar}->append_widget($gtk->{about},\'About\',\'about\');
+	$gtk->{toolbar}->set_tooltips(1);
+
+	$gtk->{handlebox}->add($gtk->{toolbar});
+	$gtk->{handlebox}->set_shadow_type(\'none\');
+	
+	##LAYOUT TABLE
+	my $table_options = [ \'fill\',\'shrink\',\'expand\' ];
+	$gtk->{table}->attach($gtk->{progress},0,2,0,1,[],[],0,0);
+	$gtk->{table}->attach($gtk->{file_frame},0,2,1,2,$table_options,$table_options,0,0);
+	$gtk->{table}->attach($gtk->{title_frame},0,1,2,3,$table_options,$table_options,0,0);
+	$gtk->{table}->attach($gtk->{artist_frame},1,2,2,3,$table_options,$table_options,0,0);
+	$gtk->{table}->attach($gtk->{album_frame},0,1,3,4,$table_options,$table_options,0,0);
+	$gtk->{table}->attach($gtk->{year_frame},1,2,3,4,$table_options,$table_options,0,0);
+	$gtk->{table}->attach($gtk->{handlebox},0,2,4,5,[],[],0,0);
+	$gtk->{table}->attach($gtk->{setdetails},0,1,5,6,[],[],0,5);
+	$gtk->{table}->attach($gtk->{volume},1,2,5,6,[],[],0,5);
+	
+	$gtk->{window}->add($gtk->{table});
+
+
+	#SIGNAL CONNECTION	
+	$gtk->{window}->signal_connect( "delete_event", sub { $self->quit(); }  );  
+	$gtk->{quit}->signal_connect( "clicked", sub { $self->quit(); } );
+	$gtk->{back}->signal_connect( "clicked", sub { $self->back(); } );
+	$gtk->{next}->signal_connect( "clicked", sub { $self->next(); } );
+	$gtk->{play}->signal_connect( "clicked", sub { $self->play(); } );
+	$gtk->{stop}->signal_connect( "clicked", sub { $self->stop(); } );
+	$gtk->{about}->signal_connect( "clicked", sub { $self->update_ui(\'about\'); } );
+	$gtk->{setdetails}->signal_connect( "clicked", sub { $self->update_ui(\'edit\'); } );
+	$gtk->{volumeadj}->signal_connect( "value_changed", \&Pmp3::setvolume, $self);
+
+	#LOOP 
+	$gtk->{window}->show_all();
+
+	$self->{gtk} = $gtk;
+	$self->{mp3}->volume(80);
+	Gtk->main();
+
+}
+
+
+sub update_ui {
+	my $self = shift;
+	my $state = shift or return 0;
+	if($state eq \'quit\') {
+		$self->{mp3}->stop();
+		Gtk->exit(0);
+		return 0;
+	} elsif ($state eq \'edit\') {
+	    if ( $self->{gtk}->{setdetails}->active ) { #down
+			$self->{gtk}->{$_}->set_editable(1) foreach (qw(title artist album year));
+	        $self->{gtk}->{setdetails}->child->set("Save ID3");
+	    } else { #up
+			$self->{gtk}->{$_}->set_editable(0) foreach (qw(title artist album year));
+			eval { set_mp3tag($self->{track}, { TITLE => $self->{gtk}->{title}->get_text(),
+												ARTIST => $self->{gtk}->{artist}->get_text(),
+												ALBUM => $self->{gtk}->{artist}->get_text(),
+												YEAR => $self->{gtk}->{year}->get_text(),
+											   } ); };
+			warn $@ if $@;
+	        $self->{gtk}->{setdetails}->child->set("Edit ID3");
+	    }
+
+	} elsif ($state eq \'about\') {
+		$self->dialog_box("Pmp3 $Pmp3::BASE::VERSION\nby Matt Cashner\nhttp://pmp3.eekeek.org");	
+	} elsif ($state eq \'new\') {
+		my $tag = get_mp3tag($self->{track});
+		my $info = get_mp3info($self->{track});
+
+        if($self->{mini}) {
+            my $textline;
+            if($tag->{TITLE} && $tag->{ARTIST}) {
+                $textline = $tag->{TITLE}." - ". $tag->{ARTIST};
+            } else {
+                ($textline) = $self->{track} =~ m#^.*/(.+?)$#;
+                #print $textline;
+            }
+            $self->{gtk}->{text}->set_text($textline);
+        } else {
+            my ($file) = $self->{track} =~ m#^.*/(.+?)$#;
+            $self->{gtk}->{file}->set_text($file);
+    		$self->{gtk}->{title}->set_text($tag->{TITLE});
+    		$self->{gtk}->{artist}->set_text($tag->{ARTIST});
+    		$self->{gtk}->{album}->set_text($tag->{ALBUM});
+    		$self->{gtk}->{year}->set_text($tag->{YEAR});
+	    }
+        	
+		Gtk::Gdk->input_remove($self->{input_tag}) if $self->{input_tag};
+		my $input_fd = $self->{mp3}->get_command_read_pipe();
+		$self->{input_tag} = Gtk::Gdk->input_add($input_fd,\'read\', sub { $self->mp3_message_handler(); });
+        
+        my ($pixmap,$mask) = $self->{pixmaps}->{pause}->get();
+        $self->{gtk}->{play}->child->set($pixmap,$mask);
+       
+	} elsif ($state eq \'play\') {
+        my ($pixmap,$mask) = $self->{pixmaps}->{pause}->get();
+        $self->{gtk}->{play}->child->set($pixmap,$mask);
+    } elsif ($state eq \'pause\') {
+        my ($pixmap,$mask) = $self->{pixmaps}->{play}->get();
+        $self->{gtk}->{play}->child->set($pixmap,$mask);
+    } elsif ($state eq \'stop\') {
+        my ($pixmap, $mask) = $self->{pixmaps}->{play}->get();
+        $self->{gtk}->{play}->child->set($pixmap,$mask);
+    }
+}
+
+sub dialog_box {
+	my $self = shift;
+    my $msg = shift or return 0;
+    my $dialog = Gtk::Dialog->new();
+    $dialog->set_border_width(5);
+
+    my $close = Gtk::Button->new("Close");
+    $close->can_default(1);
+    $close->signal_connect("clicked",\&close,$dialog);
+
+    my $label = Gtk::Label->new($msg);
+    $label->set_line_wrap(1);
+    $dialog->vbox->add($label);
+
+    $dialog->action_area->pack_start($close,1,1,0);
+    $dialog->set_modal(1);
+    $close->grab_default();
+    $dialog->show_all();
+}
+
+sub close {
+    my($button,$window) = @_;
+    $window->hide;
+    return 0;
+}
+
+
+sub mp3_message_handler {
+	my $self = shift;
+	my $msg;
+    while ( $msg = $self->{mp3}->get_message ) {
+
+        my $code = $msg->{code};
+
+        if ( $code == &XA_MSG_NOTIFY_INPUT_POSITION ) {
+            my $percent = $msg->{position_offset}/$msg->{position_range};
+            $self->{gtk}->{progress}->update($percent);
+        } elsif ( $code == &XA_MSG_NOTIFY_PLAYER_STATE ) {
+            $self->next() if $msg->{state} == &XA_PLAYER_STATE_EOF;
+        }
+    }
+}
+
+
+sub create_pixmaps {
+    my ($self, $parent);
+    if(scalar @_ == 2) {
+       $self = shift;
+       $parent = shift;
+    } else {
+        $parent = shift;
+    }
+    my (%rawmaps,%pixmaps);
+    
+    
+    @{$rawmaps{q}} = ( "6 6 2 1",
+                        "       c None",
+                        "X      c #000000000000",
+                        " XXXX ",
+                        "XX  XX",
+                        "   XX ",
+                        "  XX  ",
+                        "      ",
+                        "  XX  ");
+
+
+    @{$rawmaps{pstart}} = ( "6 6 2 1",
+                              "       c None",
+                              "X      c #000000000000",
+                              " X    ",
+                              " XX   ",
+                              " XXX  ",
+                              " XXXX ",
+                              " XXX  ",
+                              " XX   ");
+
+
+    @{$rawmaps{play}} = ( "6 6 2 1",
+                              "       c None",
+                              "X      c #000000000000",
+                              "      ",
+                              " XX   ",
+                              " XXX  ",
+                              " XXXX ",
+                              " XXX  ",
+                              " XX   ");
+    
+    @{$rawmaps{stop}} = ( "6 6 2 1",
+                              "       c None",
+                              "X      c #000000000000",
+                              "      ",
+                              " XXXX ",
+                              " XXXX ",
+                              " XXXX ",
+                              " XXXX ",
+                              " XXXX ");
+
+    @{$rawmaps{close}} = ( "6 6 2 1",
+                              "       c None",
+                              "X      c #000000000000",
+                              "XX  XX",
+                              " XXXX ",
+                              "  XX  ",
+                              "  XX  ",
+                              " XXXX ",
+                              "XX  XX");
+
+    @{$rawmaps{next}} = ( "6 6 2 1",
+                              "       c None",
+                              "X      c #000000000000",
+                              "XX   X",
+                              "XXX  X",
+                              "XXXX X",
+                              "XXXX X",
+                              "XXX  X",
+                              "XX   X");
+
+
+    @{$rawmaps{back}} = ( "6 6 2 1",
+                              "       c None",
+                              "X      c #000000000000",
+                              "X   XX",
+                              "X  XXX",
+                              "X XXXX",
+                              "X XXXX",
+                              "X  XXX",
+                              "X   XX");
+
+    @{$rawmaps{pause}} = ( "6 6 2 1",
+                              "       c None",
+                              "X      c #000000000000",
+                              "      ",
+                              "XX  XX",
+                              "XX  XX",
+                              "XX  XX",
+                              "XX  XX",
+                              "XX  XX");
+        
+    my $style = $parent->get_style->bg(\'normal\');
+
+    foreach (keys %rawmaps) {
+        my ($pixmap,$mask) = Gtk::Gdk::Pixmap->create_from_xpm_d( $parent->window,
+                                                                  $style,
+                                                                  @{$rawmaps{$_}});
+        $pixmaps{$_} = Gtk::Pixmap->new($pixmap,$mask);
+    }
+
+    return %pixmaps;
+}
+';
+#}}}
+
+#}}}
+
+# c - console
+# g - gtk
+# m - gtk-mini
+my %args;
+getopts('hcgmrxd:',\%args);
+
+Pmp3::die_usage() if $args{h};
+
+if($args{g} || $args{m}) { fork and exit; }
+my $player;
+
+if($args{g}) { 
+    eval $gtkui;
+    $player = Pmp3::Gtk->new(%args); 
+} elsif($args{m}) { 
+    eval $gtkui;
+    eval $miniui;
+    $player = Pmp3::Gtk::Mini->new(%args); 
+} else { 
+    eval $consoleui;
+    $player = Pmp3::Console->new(%args); 
+}
+
+$player->build_playlist();
+$player->launch_ui();
+
+exit(0);
+
+package Pmp3; #{{{
+use Cwd;
+
+sub die_usage {
+    print <<EOF;
+
+-------------------------------------------------------
+Pmp3 - The Perl MP3 Player (v$Pmp3::BASE::VERSION)
+http://pmp3.eekeek.org
+
+usage: $0 <options> -d <starting dir>
+example: $0 -rxd /mp3/
+
+GUI Options:
+    c: Console Client (default)
+    g: GTK Client
+    m: Mini GTK Client
+    
+Options:
+    r: random
+    x: dont recurse
+    d: what dir to start in (defaults to current dir)
+-------------------------------------------------------
+
+EOF
+	exit(1);
+}
+
+sub die_error {
+	my $self = shift;
+	my $msg = shift;
+	print "ERROR: $msg\n";
+	exit(1);
+}
+
+sub randomize (\@) {
+    my $arref = shift;
+    my $i;
+    for ($i = @$arref; --$i;) {
+        my $j = int rand ($i+1);
+        next if $i == $j;
+        @$arref[$i,$j] = @$arref[$j,$i];
+    }
+}
+
+sub new {
+    my $class = shift;
+    my %args = @_;
+    my $self = {};
+
+	$self->{playlist} = [];
+	$self->{args} = \%args;
+    $self->{mp3} = MPEG::MP3Play->new();
+    bless $self,$class;
+    return $self;
+}
+
+sub build_playlist {
+	my $self = shift;
+	my $path = $self->{args}->{d} || cwd();
+	
+	opendir MP3,$path;
+    push(@{$self->{playlist}},grep /\.mp3$/i,map "$path/$_",readdir MP3);
+	closedir MP3;	
+
+	unless($self->{args}->{x}) {
+		my (@dirs,@dirs_tmp);
+    	my $continue;
+
+    	opendir DIR,$path;
+    	push(@dirs, grep -d, map "$path/$_", readdir DIR);
+    	closedir DIR;
+
+    	foreach my $dir (@dirs) {
+    	    unless($dir =~ /\.\.?$/) {
+    	        opendir DIR,$dir;
+    	        push(@dirs,grep -d, map "$dir/$_",readdir DIR);
+    	        closedir DIR;
+			
+			    opendir MP3,$dir;
+    			push (@{$self->{playlist}},grep /\.mp3$/i,map "$dir/$_",readdir MP3);
+    			closedir MP3;
+    	    }
+    	}	
+	}
+	$self->die_error("Playlist is empty") unless @{$self->{playlist}};
+	
+	@{$self->{playlist}} = sort @{$self->{playlist}};
+	randomize(@{$self->{playlist}}) if $self->{args}->{r};	
+
+    $self->next_mp3();
+    $self->{stopped} = 1;
+	return 1;
+}
+
+
+sub launch_ui {
+    warn "launch_ui() not implemented";
+    return 0;
+}
+
+sub update_ui {
+	my $self = shift;
+	my $state = shift;
+	warn "update_ui() not implemented - $state state not activated";
+	return 0;
+}
+
+
+sub play {
+    my $self = shift;
+    if($self->{paused} && $self->{playing}) {
+        $self->{paused} = 0;
+        $self->update_ui('play');
+        $self->{mp3}->play();
+	} elsif($self->{playing}) {
+		$self->{paused} = 1;
+		$self->update_ui('pause');
+		$self->{mp3}->pause();
+	} else {
+		$self->{paused} = 0;
+		$self->{playing} = 1;
+		
+		my $mp3;
+		if($self->{stopped}) { $mp3 = $self->{track}; $self->{stopped} = 0;}
+		else { $mp3 = $self->next_mp3(); }
+
+		$self->update_ui('new');
+		
+		$self->{mp3}->open($mp3);
+		$self->{mp3}->play();
+	}	
+}
+
+
+sub next_mp3 {
+    my $self = shift;
+
+	my $mp3 = shift @{$self->{playlist}};
+	push @{$self->{playlist}},$mp3;
+	$self->{track} = $mp3;
+    return $mp3;
+}
+
+
+sub prev_mp3 {
+    my $self = shift;
+
+	my $mp3 = pop @{$self->{playlist}};
+	unshift @{$self->{playlist}},$mp3;
+    $mp3 = $self->{playlist}->[$#{$self->{playlist}}];
+	$self->{track} = $mp3;
+	return $mp3;
+}
+
+
+sub next {
+    my $self = shift;
+
+    $self->{paused} = 0;
+    $self->{playing} = 0;
+
+    my $mp3 = $self->next_mp3();
+	$self->update_ui('new');
+
+    $self->{playing} = 1;
+
+    $self->{mp3}->open($mp3);
+    $self->{mp3}->play();
+}
+
+sub back {
+	my $self = shift;
+	
+	$self->{paused} = 0;
+	$self->{playing} = 0;
+
+	my $mp3 = $self->prev_mp3();
+	$self->update_ui('new');
+
+    $self->{playing} = 1;
+
+	$self->{mp3}->open($mp3);
+	$self->{mp3}->play();
+}
+
+sub stop {
+	my $self = shift;
+
+	$self->{playing} = 0;
+	$self->{paused} = 0;
+	$self->{stopped} = 1;
+	$self->update_ui('stop');
+	$self->{mp3}->stop();
+}
+
+sub pause {
+	my $self = shift;
+
+	$self->{paused} = 1;
+	$self->update_ui('pause');
+	$self->{mp3}->pause();
+}
+
+sub quit {
+	my $self = shift;
+
+	$self->{mp3}->stop();
+	$self->update_ui('quit');
+	exit(0);
+}
+#}}}
+
+# CVS HISTORY#{{{
+# ============
+
+=head1 CVS HISTORY
+
+    $Log: pmp3,v $
+    Revision 1.4  2001/07/04 19:51:35  matt
+    bug fixes
+
+    Revision 1.3  2001/06/15 11:04:23  matt
+    moved baseclass back out into the open. no need for it to be evald
+
+    Revision 1.2  2001/06/14 21:24:06  matt
+    split classes up into lexical scalars so that you dont need gtk to run the console client
+
+    Revision 1.1.1.1  2001/03/16 22:01:28  matt
+    moving back to my own cvs off of sourceforge
+
+    Revision 1.9  2000/12/06 16:53:24  sungo
+    volume controls work. gtk guis fork off.
+
+    Revision 1.8  2000/12/06 16:20:59  sungo
+    removed stupid print statement. grr
+
+    Revision 1.7  2000/12/01 16:40:29  sungo
+    pause bug fixed, i think
+
+    Revision 1.6  2000/11/29 19:53:27  sungo
+    bugfix for console client. bug prevented client from advancing to the next track when the current track terminates normally
+
+    Revision 1.5  2000/11/28 00:34:47  sungo
+    bugfixes
+
+    Revision 1.4  2000/11/27 02:01:24  sungo
+    removed extraneous files and corrected MANIFEST and Makefile
+
+    Revision 1.3  2000/11/27 01:52:51  sungo
+    functional mini gtk client and help msg. seems to be a small bug in next and back buttons. nothing showstopper
+
+    Revision 1.2  2000/11/27 00:37:24  sungo
+    working console and normal gtk client. no new docs yet.
+
+    Revision 1.1  2000/11/18 04:56:41  sungo
+    stubs and framework for new all in one player
+
+
+=cut
+#}}}

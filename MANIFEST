@@ -1,14 +1,7 @@
 MANIFEST
+LICENSE
 VERSION
 Makefile.PL
 README
-playmp3
+pmp3
 pmp3rc
-upload_status
-gtk/MANIFEST
-gtk/Makefile.PL
-gtk/README
-gtk/pmp3_gtk
-gtk/pmp3_mini
-gtk/pmp3rc
-gtk/upload_status
